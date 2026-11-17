@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Chat POC</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 30px auto; }
+    #status { font-weight: bold; }
+    #log { border: 1px solid #ccc; height: 320px; overflow-y: auto; padding: 8px; margin: 10px 0; }
+    .system { color: #888; font-style: italic; }
+    .me { color: #0a58ca; }
+    form { display: flex; gap: 6px; }
+    input { flex: 1; padding: 8px; }
+  </style>
+</head>
+<body>
+  <h2> Chat</h2>
+  <div>Status: <span id="status">connecting...</span> | Online: <span id="count">0</span> | You: <span id="me">-</span></div>
+  <div id="log"></div>
+  <form id="form">
+    <input id="input" autocomplete="off" placeholder="Type a message..." disabled />
+    <button id="send" disabled>Send</button>
+  </form>
+
+  <script>
+    const log = document.getElementById("log");
+    const statusEl = document.getElementById("status");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    let myName = null;
+    let socket;
+
+    function addLine(text, cls) {
+      const div = document.createElement("div");
+      div.textContent = text; // textContent (not innerHTML) prevents XSS
+      if (cls) div.className = cls;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function showChat(m) {
+      const time = new Date(m.ts).toLocaleTimeString();
+      addLine(`[${time}] ${m.from}: ${m.text}`, m.from === myName ? "me" : "");
+    }
+
+    function setConnected(on) {
+      statusEl.textContent = on ? "connected" : "disconnected";
+      statusEl.style.color = on ? "green" : "red";
+      input.disabled = sendBtn.disabled = !on;
+    }
+
+    function connect() {
+      // ws:// is the WebSocket scheme (wss:// when the page is served over https).
+      const proto = location.protocol === "https:" ? "wss://" : "ws://";
+      socket = new WebSocket(proto + location.host);
+
+      socket.onopen = () => setConnected(true);
+
+      socket.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "welcome") {
+          myName = msg.name;
+          document.getElementById("me").textContent = myName;
+        } else if (msg.type === "users") {
+          document.getElementById("count").textContent = msg.count;
+        } else if (msg.type === "system") {
+          addLine("* " + msg.text, "system");
+        } else if (msg.type === "history") {
+          log.textContent = ""; // avoid duplicates after a reconnect
+          msg.messages.forEach(showChat);
+          if (msg.messages.length) addLine("--- end of history ---", "system");
+        } else if (msg.type === "chat") {
+          showChat(msg);
+        }
+      };
+
+      socket.onclose = () => {
+        setConnected(false);
+        addLine("* connection lost, retrying in 2s...", "system");
+        setTimeout(connect, 2000); // simple auto-reconnect
+      };
+    }
+
+    document.getElementById("form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (text && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "chat", text }));
+        input.value = "";
+      }
+    });
+
+    connect();
+  </script>
+</body>
+</html>
